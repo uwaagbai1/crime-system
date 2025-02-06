@@ -1,0 +1,104 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Crime Detection System Login">
+    <meta name="keywords" content="Crime Detection, Login, Django">
+    <meta name="author" content="Your Name">
+    <link rel="icon" href="{% static 'images/logo/favicon.png' %}" type="image/x-icon">
+    <link rel="shortcut icon" href="{% static 'images/logo/favicon.png' %}" type="image/x-icon">
+    <title>Crime Detection System | Login</title>
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="{% static 'vendor/animation/animate.min.css' %}">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'vendor/ionio-icon/css/iconoir.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/weather/weather-icons.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/weather/weather-icons-wind.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/flag-icons-master/flag-icon.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/tabler-icons/tabler-icons.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/prism/prism.min.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/bootstrap/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/simplebar/simplebar.css' %}">
+    <link rel="stylesheet" href="{% static 'style-BfW0E3X2.css' %}">
+</head>
+<body class="sign-in-bg">
+    <div class="app-wrapper d-block">
+        <div class="main-container">
+            <div class="container">
+                <div class="row sign-in-content-bg">
+                    <!-- Left Column (Image) -->
+                    <div class="col-lg-6 image-contentbox d-none d-lg-block">
+                        <div class="form-container">
+                            <div class="signup-content mt-4">
+                                
+                            </div>
+                            <div class="signup-bg-img">
+                                <img src="{% static 'images/login/04.png' %}" alt="Login Image" class="img-fluid">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column (Form) -->
+                    <div class="col-lg-6 form-contentbox">
+                        <div class="form-container">
+                            <form method="post" class="app-form">
+                                {% csrf_token %}
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="mb-5 text-center text-lg-start">
+                                            <h2 class="text-primary f-w-600">Crime Detection System Using Fuzzy Logic</h2>
+                                            <p>Sign in with your data that you entered during your registration</p>
+                                        </div>
+                                    </div>
+                                    <!-- Display Form Errors -->
+                                    {% if form.errors %}
+                                        <div class="alert alert-danger">
+                                            <strong>Error:</strong> Invalid username or password.
+                                        </div>
+                                    {% endif %}
+                                    <div class="col-12">
+                                        <div class="mb-3">
+                                            <label for="username" class="form-label">Username</label>
+                                            <input type="text" class="form-control" placeholder="Enter Your Username" id="username" name="username" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="mb-3">
+                                            <label for="password" class="form-label">Password</label>
+                                            <a href="#" class="link-primary float-end">Forgot Password?</a>
+                                            <input type="password" class="form-control" placeholder="Enter Your Password" id="password" name="password" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="form-check mb-3">
+                                            <input class="form-check-input" type="checkbox" value="" id="checkDefault">
+                                            <label class="form-check-label text-secondary" for="checkDefault">
+                                                Remember me
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="mb-3">
+                                            <button type="submit" class="btn btn-primary w-100">Sign In</button>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="text-center text-lg-start">
+                                            Don't Have Your Account yet? <a href="{% url 'register' %}" class="link-primary text-decoration-underline">Sign up</a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

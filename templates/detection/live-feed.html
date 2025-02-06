@@ -1,0 +1,58 @@
+{% extends 'detection/base.html' %}
+{% load static %}
+{% block title %} Live Feed {% endblock title %}
+{% block content %}
+<main>
+    <div class="container-fluid mt-3">
+        <h2 class="text-center mb-4">Camera Live Feed</h2>
+        <div class="row justify-content-center">
+            <div class="col-md-8 position-relative">
+                <video id="videoFeed" autoplay playsinline class="w-100 border rounded"></video>
+                <canvas id="detectionCanvas" class="position-absolute top-0 start-0 w-100 h-100"></canvas>
+            </div>
+        </div>
+        
+        <div class="row mt-4 justify-content-center">
+            <div class="col-md-8">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">Emotion Metrics</h5>
+                                <div id="emotionMetrics"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">Environmental Metrics</h5>
+                                <div id="envMetrics"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">Camera Interference</h5>
+                                <div id="interferenceMetrics"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">Crime Likelihood</h5>
+                                <div id="crimeLikelihood" class="text-center fs-4 fw-bold"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <script src="{% static 'detection/face-api.js' %}"></script>
+        <script src="{% static 'detection/live-feed.js' %}"></script>
+    </div>
+</main>
+{% endblock content %}
