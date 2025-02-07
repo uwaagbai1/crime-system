@@ -155,12 +155,6 @@ crime-detection-system/
 4. Push to the branch
 5. Create a new Pull Request
 
-## License
-[Insert your license information here]
-
-## Support
-For support, please [insert contact information or support instructions]
-
 ## Acknowledgments
 - face-api.js for face detection capabilities
 - scikit-fuzzy for fuzzy logic implementation

@@ -1,46 +1,76 @@
 {% extends 'detection/base.html' %}
 {% load static %}
-{% block title %} Alerts Page {% endblock title %}
+
+{% block title %}Alerts Page{% endblock title %}
+
 {% block content %}
-<main>
-    <div class="container-fluid mt-3">
-        <h2 class="text-center mb-4">Real-Time Crime Alerts</h2>
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card">
-                    <div class="card-body">
-                        <ul id="alertsList" class="list-group list-group-flush"></ul>
+<div class="container-fluid mt-3">
+    <h2 class="text-center mb-4">Real-Time Crime Alerts</h2>
+    
+    <div id="alertsContainer" class="row">
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-12">
+            <h3>Alert History</h3>
+            <div class="list-group">
+                {% for alert in alerts %}
+                <div class="list-group-item">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h5 class="mb-1">{{ alert.message }}</h5>
+                        <small>{{ alert.timestamp|date:"Y-m-d H:i:s" }}</small>
                     </div>
+                    {% if alert.image %}
+                        <img src="{{ alert.image.url }}" class="img-fluid mt-2" style="max-height: 200px;">
+                    {% endif %}
+                    <p class="mb-1">Alert Type: {{ alert.alert_type }}</p>
+                    <small>Severity: {{ alert.severity }}</small>
                 </div>
+                {% endfor %}
             </div>
         </div>
     </div>
-    <script>
-        const alertsList = document.getElementById("alertsList");
-        const ws = new WebSocket("ws://127.0.0.1:8000/ws/alerts/");
-        
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            const listItem = document.createElement("li");
-            listItem.classList.add("list-group-item", "border-start", "border-danger", "border-4");
-            
-            listItem.innerHTML = `
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="fw-bold text-danger">Alert</div>
-                        <div>${data.message}</div>
-                        <small class="text-muted">${data.timestamp}</small>
-                    </div>
-                    ${data.image_url ? `
-                        <div class="ms-3">
-                            <img src="${data.image_url}" class="img-fluid rounded" style="max-width: 200px" alt="Alert image">
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-            
-            alertsList.insertBefore(listItem, alertsList.firstChild);
-        };
-    </script>
-</main>
+</div>
+
+<script>
+const alertsContainer = document.getElementById('alertsContainer');
+
+const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
+const alertSocket = new WebSocket(
+    ws_scheme + '://' + window.location.host + '/ws/alerts/'
+);
+
+alertSocket.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    
+    const alertElement = document.createElement('div');
+    alertElement.className = 'col-md-4 mb-3';
+    
+    const alertHTML = `
+        <div class="alert alert-danger">
+            <div class="d-flex justify-content-between">
+                <strong>${data.alert_type}</strong>
+                <small>${data.timestamp}</small>
+            </div>
+            <p>${data.message}</p>
+            ${data.image_url ? `<img src="${data.image_url}" class="img-fluid mt-2">` : ''}
+        </div>
+    `;
+    
+    alertElement.innerHTML = alertHTML;
+    
+    alertsContainer.insertBefore(alertElement, alertsContainer.firstChild);
+    
+    setTimeout(() => {
+        alertElement.remove();
+    }, 30000);
+};
+
+alertSocket.onclose = function(e) {
+    console.error('Alert socket closed unexpectedly');
+    setTimeout(() => {
+        window.location.reload();
+    }, 5000);
+};
+</script>
 {% endblock content %}

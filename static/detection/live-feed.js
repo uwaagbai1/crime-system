@@ -5,10 +5,23 @@ document.addEventListener('DOMContentLoaded', function() {
     let darkFrameCount = 0;
     let lastImageData = null;
     let movements = [];
+    let movementHistory = [];
     
     let blockingStartTime = null;
     let blockingAlertSent = false;
     const BLOCKING_THRESHOLD_MS = 7000;
+    const MOVEMENT_HISTORY_DURATION = 2000;
+    const ALERT_THRESHOLD = 0.6;
+    const ALERT_COOLDOWN = 10000;
+    let lastAlertTime = 0;
+    
+    const VIOLENCE_THRESHOLDS = {
+        PROXIMITY: 150,
+        QUICK_MOVEMENT: 0.4,
+        ANGER: 0.5,
+        FIGHTING: 0.6,
+        ALERT: 0.7
+    };
     
     let currentMetrics = {
         anger: 0,
@@ -18,7 +31,10 @@ document.addEventListener('DOMContentLoaded', function() {
         crowd: 0,
         cameraBlocked: 0,
         cameraCovered: 0,
-        quickMovements: 0
+        quickMovements: 0,
+        fighting: 0,
+        vandalism: 0,
+        assault: 0
     };
 
     async function loadModels() {
@@ -67,9 +83,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const avgBrightness = totalBrightness / (data.length / 16);
         const darkPixelRatio = (darkPixels / (data.length / 16)) * 4;
         
+        const previousCoverageLevel = currentMetrics.cameraCovered;
         currentMetrics.cameraCovered = darkPixelRatio > 0.85 ? 1 : 
                                      darkPixelRatio > 0.7 ? 0.8 :
                                      darkPixelRatio > 0.5 ? 0.5 : 0;
+        
+        if (currentMetrics.cameraCovered >= 0.85 && previousCoverageLevel < 0.85) {
+            const now = Date.now();
+            if (now - lastAlertTime > ALERT_COOLDOWN) {
+                sendAlert(
+                    'camera_covered',
+                    'Warning: Camera has been covered or obstructed',
+                    captureSnapshot()
+                );
+                lastAlertTime = now;
+            }
+        }
         
         const isCurrentlyBlocked = avgBrightness < 30;
         
@@ -83,7 +112,11 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (blockingDuration >= BLOCKING_THRESHOLD_MS && !blockingAlertSent) {
                 const snapshot = captureSnapshot();
-                sendSustainedBlockingAlert(blockingDuration, snapshot);
+                sendAlert(
+                    'sustained_blocking',
+                    'Camera has been blocked for an extended period',
+                    snapshot
+                );
                 blockingAlertSent = true;
             }
         } else {
@@ -93,34 +126,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         return imageData;
-    }
-
-    async function sendSustainedBlockingAlert(duration, snapshot) {
-        try {
-            const response = await fetch('/process-emotion/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCookie('csrftoken')
-                },
-                body: JSON.stringify({
-                    ...currentMetrics,
-                    alert_type: 'sustained_blocking',
-                    blocking_duration: duration,
-                    snapshot: snapshot,
-                    timestamp: new Date().toISOString()
-                })
-            });
-            
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
-
-            const result = await response.json();
-            console.log('Alert sent successfully:', result);
-        } catch (error) {
-            console.error('Error sending blocking alert:', error);
-        }
     }
 
     function detectQuickMovements(currentFrame, ctx) {
@@ -140,14 +145,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         Math.abs(currentData[i + 2] - lastData[i + 2]);
             
             totalDiff += diff;
-            if (diff > 100) {
-                significantChanges++;
-            }
+            if (diff > 100) significantChanges++;
         }
 
-        const avgDiff = totalDiff / (currentData.length / 16);
         const changeRatio = significantChanges / (currentData.length / 16);
-
         movements.push({
             timestamp: Date.now(),
             intensity: changeRatio
@@ -167,10 +168,124 @@ document.addEventListener('DOMContentLoaded', function() {
         lastImageData = currentFrame;
     }
 
+    function detectViolentBehavior(detections, ctx) {
+        currentMetrics.fighting = 0;
+        currentMetrics.vandalism = 0;
+        currentMetrics.assault = 0;
+
+        if (detections.length >= 2) {
+            let maxFightingScore = 0;
+            let maxAssaultScore = 0;
+
+            for (let i = 0; i < detections.length; i++) {
+                for (let j = i + 1; j < detections.length; j++) {
+                    const face1 = detections[i].detection.box;
+                    const face2 = detections[j].detection.box;
+                    
+                    const center1 = {
+                        x: face1.x + face1.width / 2,
+                        y: face1.y + face1.height / 2
+                    };
+                    const center2 = {
+                        x: face2.x + face2.width / 2,
+                        y: face2.y + face2.height / 2
+                    };
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(center1.x - center2.x, 2) + 
+                        Math.pow(center1.y - center2.y, 2)
+                    );
+                    
+                    const anger1 = detections[i].expressions.angry;
+                    const anger2 = detections[j].expressions.angry;
+                    const fear1 = detections[i].expressions.fearful;
+                    const fear2 = detections[j].expressions.fearful;
+                    
+                    const proximityFactor = Math.max(0, 1 - (distance / VIOLENCE_THRESHOLDS.PROXIMITY));
+                    const emotionFactor = Math.max(anger1, anger2);
+                    const movementFactor = currentMetrics.quickMovements;
+                    
+                    const fightingScore = (
+                        proximityFactor * 0.4 +
+                        emotionFactor * 0.4 +
+                        movementFactor * 0.2
+                    );
+                    
+                    maxFightingScore = Math.max(maxFightingScore, fightingScore);
+
+                    const victimFear = Math.max(fear1, fear2);
+                    const assaultScore = (
+                        fightingScore * 0.6 +
+                        victimFear * 0.4
+                    );
+                    
+                    maxAssaultScore = Math.max(maxAssaultScore, assaultScore);
+
+                    if (fightingScore > VIOLENCE_THRESHOLDS.FIGHTING) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = `rgba(255, 0, 0, ${fightingScore})`;
+                        ctx.lineWidth = 2;
+                        ctx.moveTo(center1.x, center1.y);
+                        ctx.lineTo(center2.x, center2.y);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            currentMetrics.fighting = maxFightingScore;
+            currentMetrics.assault = maxAssaultScore;
+
+            if (maxFightingScore > VIOLENCE_THRESHOLDS.ALERT || maxAssaultScore > VIOLENCE_THRESHOLDS.ALERT) {
+                const now = Date.now();
+                if (now - lastAlertTime > ALERT_COOLDOWN) {
+                    sendAlert('violence_detected', 'High levels of violent behavior detected', captureSnapshot());
+                    lastAlertTime = now;
+                }
+            }
+        }
+
+        detectVandalism();
+    }
+
+    function detectVandalism() {
+        const now = Date.now();
+        movementHistory = movementHistory.filter(m => now - m.timestamp < MOVEMENT_HISTORY_DURATION);
+        movementHistory.push({
+            timestamp: now,
+            intensity: currentMetrics.quickMovements
+        });
+
+        if (movementHistory.length > 5) {
+            const recentMovements = movementHistory.slice(-5);
+            const repetitiveMotion = recentMovements.filter(m => m.intensity > VIOLENCE_THRESHOLDS.QUICK_MOVEMENT).length >= 3;
+            const sustainedMotion = (now - movementHistory[0].timestamp) > 1000;
+            
+            if (repetitiveMotion && sustainedMotion) {
+                const vandalismScore = Math.min(
+                    (currentMetrics.quickMovements * 0.7 +
+                    currentMetrics.anger * 0.3) * 
+                    (repetitiveMotion ? 1.5 : 1),
+                    1
+                );
+                
+                currentMetrics.vandalism = vandalismScore;
+
+                if (vandalismScore > VIOLENCE_THRESHOLDS.ALERT) {
+                    const now = Date.now();
+                    if (now - lastAlertTime > ALERT_COOLDOWN) {
+                        sendAlert('vandalism_detected', 'Potential vandalism activity detected', captureSnapshot());
+                        lastAlertTime = now;
+                    }
+                }
+            }
+        }
+    }
+
     function updateMetricsDisplay() {
         const emotionMetrics = document.getElementById('emotionMetrics');
         const envMetrics = document.getElementById('envMetrics');
         const interferenceMetrics = document.getElementById('interferenceMetrics');
+        const violenceMetrics = document.getElementById('violenceMetrics');
         const crimeLikelihood = document.getElementById('crimeLikelihood');
 
         emotionMetrics.innerHTML = `
@@ -214,15 +329,33 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
 
+        violenceMetrics.innerHTML = `
+            <div class="d-flex justify-content-between">
+                <span>Fighting:</span>
+                <span>${(currentMetrics.fighting * 100).toFixed(1)}%</span>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span>Vandalism:</span>
+                <span>${(currentMetrics.vandalism * 100).toFixed(1)}%</span>
+            </div>
+            <div class="d-flex justify-content-between">
+                <span>Assault:</span>
+                <span>${(currentMetrics.assault * 100).toFixed(1)}%</span>
+            </div>
+        `;
+
         const likelihood = (
-            currentMetrics.anger * 0.1 + 
-            currentMetrics.fear * 0.1 + 
-            currentMetrics.stress * 0.1 + 
+            currentMetrics.anger * 0.05 + 
+            currentMetrics.fear * 0.05 + 
+            currentMetrics.stress * 0.05 + 
             currentMetrics.sound * 0.05 + 
             currentMetrics.crowd * 0.05 +
-            currentMetrics.cameraBlocked * 0.3 +
-            currentMetrics.cameraCovered * 0.15 + 
-            currentMetrics.quickMovements * 0.15
+            currentMetrics.cameraBlocked * 0.15 +
+            currentMetrics.cameraCovered * 0.1 + 
+            currentMetrics.quickMovements * 0.1 +
+            currentMetrics.fighting * 0.2 +   
+            currentMetrics.vandalism * 0.1 +
+            currentMetrics.assault * 0.1      
         );
 
         crimeLikelihood.innerHTML = `${(likelihood * 100).toFixed(1)}%`;
@@ -232,30 +365,72 @@ document.addEventListener('DOMContentLoaded', function() {
             'text-success'
         }`;
 
-        if (likelihood > 0.6) {
-            sendDataToServer({
-                ...currentMetrics,
-                snapshot: captureSnapshot(),
-                timestamp: new Date().toISOString()
-            });
+        checkHighRiskSituation(likelihood);
+    }
+
+    function checkHighRiskSituation(likelihood) {
+        const now = Date.now();
+        if (likelihood > ALERT_THRESHOLD && now - lastAlertTime > ALERT_COOLDOWN) {
+            sendAlert('high_risk', 'High-risk situation detected - multiple indicators present', captureSnapshot());
+            lastAlertTime = now;
         }
     }
 
-    async function sendDataToServer(data) {
+    async function sendAlert(alertType, message, snapshot) {
         try {
-            const response = await fetch('/process-emotion/', {
+            const alertData = {
+                alert_type: alertType,
+                message: message,
+                metrics: currentMetrics,
+                snapshot: snapshot,
+                timestamp: new Date().toISOString()
+            };
+
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(alertData));
+            }
+
+            const response = await fetch('/process-alert/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': getCookie('csrftoken')
                 },
-                body: JSON.stringify(data)
+                body: JSON.stringify(alertData)
             });
-            const result = await response.json();
-            console.log('Server response:', result);
+
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+
+            showLocalAlert(message);
+
         } catch (error) {
-            console.error('Error sending data to server:', error);
+            console.error('Error sending alert:', error);
         }
+    }
+
+    function showLocalAlert(message) {
+        const toastHTML = `
+            <div class="toast show position-fixed top-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="toast-header bg-danger text-white">
+                    <strong class="me-auto">Security Alert</strong>
+                    <small>${new Date().toLocaleTimeString()}</small>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+                <div class="toast-body">
+                    ${message}
+                </div>
+            </div>
+        `;
+        
+        const toastContainer = document.createElement('div');
+        toastContainer.innerHTML = toastHTML;
+        document.body.appendChild(toastContainer);
+        
+        setTimeout(() => {
+            toastContainer.remove();
+        }, 5000);
     }
 
     function getCookie(name) {
@@ -279,6 +454,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         setInterval(async () => {
             const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
             const imageData = detectCameraInterference(ctx);
@@ -291,68 +467,58 @@ document.addEventListener('DOMContentLoaded', function() {
             const resizedDetections = faceapi.resizeResults(detections, displaySize);
             
             if (detections.length > 0) {
+                const avgAnger = detections.reduce((sum, det) => sum + det.expressions.angry, 0) / detections.length;
+                const avgFear = detections.reduce((sum, det) => sum + det.expressions.fearful, 0) / detections.length;
+                const avgStress = detections.reduce((sum, det) => 
+                    sum + (det.expressions.sad + det.expressions.disgusted) / 2, 0
+                ) / detections.length;
+
                 currentMetrics = {
                     ...currentMetrics,
-                    anger: detections[0].expressions.angry,
-                    fear: detections[0].expressions.fearful,
-                    stress: (detections[0].expressions.sad + detections[0].expressions.disgusted) / 2,
-                    sound: Math.random(),
+                    anger: avgAnger,
+                    fear: avgFear,
+                    stress: avgStress,
                     crowd: detections.length / 10
                 };
+                
+                detectViolentBehavior(detections, ctx);
             }
             
             updateMetricsDisplay();
-
-            resizedDetections.forEach(detection => {
-                const box = detection.detection.box;
-                const drawBox = new faceapi.draw.DrawBox(box, {
-                    label: 'Human Face',
-                    lineWidth: 2,
-                    boxColor: 'green',
-                });
-                drawBox.draw(canvas);
-            });
-            
-            faceapi.draw.drawFaceLandmarks(canvas, resizedDetections);
-            faceapi.draw.drawFaceExpressions(canvas, resizedDetections);
+            drawDetections(resizedDetections, ctx);
         }, 100);
     });
 
+    function drawDetections(detections, ctx) {
+        detections.forEach(detection => {
+            const box = detection.detection.box;
+            const drawBox = new faceapi.draw.DrawBox(box, {
+                label: `Face (Anger: ${(detection.expressions.angry * 100).toFixed(1)}%)`,
+                lineWidth: 2,
+                boxColor: detection.expressions.angry > VIOLENCE_THRESHOLDS.ANGER ? 'red' : 'green',
+            });
+            drawBox.draw(canvas);
+        });
+        
+        faceapi.draw.drawFaceLandmarks(canvas, detections);
+        faceapi.draw.drawFaceExpressions(canvas, detections);
+    }
+
     const socket = new WebSocket("ws://127.0.0.1:8000/ws/alerts/");
     
-    socket.onopen = function () {
-        console.log("WebSocket connection established.");
+    socket.onopen = function() {
+        console.log("WebSocket connection established");
     };
     
-    socket.onmessage = function (event) {
-        const data = JSON.parse(event.data);
-        const toastHTML = `
-            <div class="toast show position-fixed top-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="toast-header bg-danger text-white">
-                    <strong class="me-auto">Alert</strong>
-                    <small>${new Date().toLocaleTimeString()}</small>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-                </div>
-                <div class="toast-body">
-                    ${data.message}
-                </div>
-            </div>
-        `;
-        const toastContainer = document.createElement('div');
-        toastContainer.innerHTML = toastHTML;
-        document.body.appendChild(toastContainer);
-        
-        setTimeout(() => {
-            toastContainer.remove();
-        }, 5000);
-    };
-    
-    socket.onerror = function (error) {
+    socket.onerror = function(error) {
         console.error("WebSocket error:", error);
     };
     
-    socket.onclose = function () {
-        console.log("WebSocket connection closed.");
+    socket.onclose = function() {
+        console.log("WebSocket connection closed");
+        setTimeout(() => {
+            window.location.reload();
+        }, 5000);
     };
 
     loadModels();
