@@ -14,5 +14,6 @@ class AlertConsumer(AsyncWebsocketConsumer):
             'message': event['message'],
             'alert_type': event['alert_type'],
             'timestamp': event['timestamp'],
-            'image_url': event['image_url']
+            'image_url': event['image_url'],
+            'severity': event['severity']
         }))

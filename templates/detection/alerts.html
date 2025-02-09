@@ -1,32 +1,55 @@
 {% extends 'detection/base.html' %}
 {% load static %}
-
 {% block title %}Alerts Page{% endblock title %}
-
 {% block content %}
 <div class="container-fluid mt-3">
+    <br>
     <h2 class="text-center mb-4">Real-Time Crime Alerts</h2>
-    
     <div id="alertsContainer" class="row">
-    </div>
-
-    <div class="row mt-4">
-        <div class="col-12">
-            <h3>Alert History</h3>
-            <div class="list-group">
-                {% for alert in alerts %}
-                <div class="list-group-item">
-                    <div class="d-flex w-100 justify-content-between">
-                        <h5 class="mb-1">{{ alert.message }}</h5>
-                        <small>{{ alert.timestamp|date:"Y-m-d H:i:s" }}</small>
-                    </div>
-                    {% if alert.image %}
-                        <img src="{{ alert.image.url }}" class="img-fluid mt-2" style="max-height: 200px;">
-                    {% endif %}
-                    <p class="mb-1">Alert Type: {{ alert.alert_type }}</p>
-                    <small>Severity: {{ alert.severity }}</small>
+        <div class="col-md-3">
+            <div class="card mb-3">
+                <div class="card-header bg-danger text-white">
+                    Critical Alerts
                 </div>
-                {% endfor %}
+                <div class="card-body" id="criticalAlerts">
+                </div>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <div class="card">
+                <div class="card-header">
+                    Alert History
+                </div>
+                <div class="card-body">
+                    <div class="list-group" id="alertsList">
+                        {% for alert in alerts %}
+                        <div class="list-group-item">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h5 class="mb-1">{{ alert.message }}</h5>
+                                <small>{{ alert.timestamp|date:"Y-m-d H:i:s" }}</small>
+                            </div>
+                            <p class="mb-1">
+                                <span class="badge bg-{{ alert.severity }}">{{ alert.severity|title }}</span>
+                                {{ alert.alert_type|title }}
+                            </p>
+                            {% if alert.metrics %}
+                            <div class="small mt-2">
+                                <strong>Metrics:</strong>
+                                {% if alert.metrics.camera_coverage %}
+                                Camera Coverage: {{ alert.metrics.camera_coverage|floatformat:1 }}%,
+                                {% endif %}
+                                {% if alert.metrics.sustained_movement %}
+                                Sustained Movement: {{ alert.metrics.sustained_movement|floatformat:1 }}s,
+                                {% endif %}
+                                {% if alert.metrics.quick_movements %}
+                                Quick Movements: {{ alert.metrics.quick_movements|floatformat:1 }}%
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -34,36 +57,57 @@
 
 <script>
 const alertsContainer = document.getElementById('alertsContainer');
+const alertsList = document.getElementById('alertsList');
+const criticalAlerts = document.getElementById('criticalAlerts');
 
 const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
 const alertSocket = new WebSocket(
     ws_scheme + '://' + window.location.host + '/ws/alerts/'
 );
 
+function createAlertElement(data) {
+    const alertElement = document.createElement('div');
+    alertElement.className = `alert alert-${data.severity === 'critical' ? 'danger' : 'warning'} mb-2`;
+    
+    let metricsHtml = '';
+    if (data.metrics) {
+        metricsHtml = `
+            <div class="small mt-2">
+                <strong>Metrics:</strong><br>
+                ${data.metrics.camera_coverage ? `Camera Coverage: ${data.metrics.camera_coverage.toFixed(1)}%<br>` : ''}
+                ${data.metrics.sustained_movement ? `Sustained Movement: ${data.metrics.sustained_movement.toFixed(1)}s<br>` : ''}
+                ${data.metrics.quick_movements ? `Quick Movements: ${data.metrics.quick_movements.toFixed(1)}%` : ''}
+            </div>
+        `;
+    }
+
+    alertElement.innerHTML = `
+        <div class="d-flex justify-content-between">
+            <strong>${data.alert_type}</strong>
+            <small>${data.timestamp}</small>
+        </div>
+        <p class="mb-1">${data.message}</p>
+        ${metricsHtml}
+    `;
+
+    return alertElement;
+}
+
 alertSocket.onmessage = function(e) {
     const data = JSON.parse(e.data);
-    
-    const alertElement = document.createElement('div');
-    alertElement.className = 'col-md-4 mb-3';
-    
-    const alertHTML = `
-        <div class="alert alert-danger">
-            <div class="d-flex justify-content-between">
-                <strong>${data.alert_type}</strong>
-                <small>${data.timestamp}</small>
-            </div>
-            <p>${data.message}</p>
-            ${data.image_url ? `<img src="${data.image_url}" class="img-fluid mt-2">` : ''}
-        </div>
-    `;
-    
-    alertElement.innerHTML = alertHTML;
-    
-    alertsContainer.insertBefore(alertElement, alertsContainer.firstChild);
-    
-    setTimeout(() => {
-        alertElement.remove();
-    }, 30000);
+    const alertElement = createAlertElement(data);
+
+    if (data.severity === 'critical') {
+        criticalAlerts.insertBefore(alertElement.cloneNode(true), criticalAlerts.firstChild);
+        
+        const audio = new Audio('/static/detection/alert.mp3');
+        audio.play().catch(e => console.log('Audio play failed:', e));
+    }
+
+    const listItem = document.createElement('div');
+    listItem.className = 'list-group-item';
+    listItem.appendChild(alertElement);
+    alertsList.insertBefore(listItem, alertsList.firstChild);
 };
 
 alertSocket.onclose = function(e) {

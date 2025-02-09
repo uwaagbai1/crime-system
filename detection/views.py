@@ -1,16 +1,17 @@
 import base64
+import logging
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Alert, CameraLog
-from .fuzzy_logic import evaluate_crime_likelihood
-import datetime
+from django.core.files.base import ContentFile
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from django.core.files.base import ContentFile
-import os
+from .models import Alert, CameraLog
 import json
+import datetime
+
+logger = logging.getLogger(__name__)
 
 @login_required
 def alerts(request):
@@ -27,98 +28,87 @@ def landing(request):
 
 @csrf_exempt
 def process_emotion_data(request):
-    if request.method == 'POST':
+    if request.method != 'POST':
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Invalid request method'
+        }, status=405)
+
+    try:
+        # Parse JSON data
         try:
             data = json.loads(request.body)
-            alert_type = None
-            alert_message = None
-
-            if data.get('fighting', 0) > 0.6:
-                alert_type = 'fighting'
-                alert_message = 'Potential fighting detected'
-            elif data.get('vandalism', 0) > 0.6:
-                alert_type = 'vandalism'
-                alert_message = 'Potential vandalism detected'
-            elif data.get('assault', 0) > 0.6:
-                alert_type = 'assault'
-                alert_message = 'Potential assault detected'
-            elif data.get('cameraBlocked', 0) > 0.8:
-                alert_type = 'camera_interference'
-                alert_message = 'Camera interference detected'
-
-            if alert_type:
-                try:
-                    alert = Alert.objects.create(
-                        message=alert_message,
-                        severity='high',
-                        alert_type=alert_type,
-                        metrics=data
-                    )
-
-                    if 'snapshot' in data:
-                        try:
-                            image_data = data['snapshot']
-                            if ',' in image_data:
-                                image_data = image_data.split(',')[1]
-                            
-                            image_content = ContentFile(base64.b64decode(image_data))
-                            alert.image.save(f'alert_{alert.id}.jpg', image_content)
-                        except Exception as e:
-                            print(f"Error processing image: {e}")
-
-                    CameraLog.objects.create(
-                        camera_id="Camera_1",
-                        emotion_data={
-                            'anger': data.get('anger', 0),
-                            'fear': data.get('fear', 0),
-                            'stress': data.get('stress', 0)
-                        },
-                        violence_data={
-                            'fighting': data.get('fighting', 0),
-                            'vandalism': data.get('vandalism', 0),
-                            'assault': data.get('assault', 0)
-                        }
-                    )
-
-                    channel_layer = get_channel_layer()
-                    async_to_sync(channel_layer.group_send)(
-                        "alerts",
-                        {
-                            'type': 'send_alert',
-                            'message': alert_message,
-                            'alert_type': alert_type,
-                            'timestamp': alert.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                            'image_url': alert.image.url if alert.image else None,
-                            'severity': alert.severity
-                        }
-                    )
-
-                    return JsonResponse({
-                        'status': 'success',
-                        'alert_id': alert.id,
-                        'message': alert_message
-                    })
-
-                except Exception as e:
-                    return JsonResponse({
-                        'status': 'error',
-                        'message': f'Error creating alert: {str(e)}'
-                    }, status=500)
-
-            return JsonResponse({'status': 'success', 'message': 'No alert triggered'})
-
-        except json.JSONDecodeError:
+            logger.info(f"Received data: {data}")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {str(e)}")
             return JsonResponse({
                 'status': 'error',
                 'message': 'Invalid JSON data'
             }, status=400)
+
+        alert_type = data.get('alert_type', 'suspicious_behavior')
+        alert_message = data.get('message', 'Unknown alert')
+        severity = data.get('severity', 'medium')
+        metrics = data.get('metrics', {})
+        
+        if not isinstance(metrics, dict):
+            logger.error(f"Metrics is not a dictionary: {metrics}")
+            metrics = {}
+
+        try:
+            alert = Alert.objects.create(
+                message=alert_message,
+                severity=severity,
+                alert_type=alert_type,
+                metrics=metrics,
+                image=None
+            )
+            logger.info(f"Alert created: {alert.id}")
+
+            violence_data = {
+                'fighting': metrics.get('fighting', 0),
+                'vandalism': metrics.get('vandalism', 0),
+                'assault': metrics.get('assault', 0)
+            }
+
+            CameraLog.objects.create(
+                camera_id='main',
+                emotion_data=metrics,
+                violence_data=violence_data
+            )
+            logger.info("CameraLog created successfully")
+
+            ws_message = {
+                'type': 'send_alert',
+                'message': alert_message,
+                'alert_type': alert_type,
+                'timestamp': alert.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                'image_url': None,
+                'severity': severity
+            }
+
+            try:
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)("alerts", ws_message)
+            except Exception as e:
+                logger.error(f"WebSocket error: {str(e)}")
+
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Alert processed successfully',
+                'alert_id': alert.id
+            })
+
         except Exception as e:
+            logger.error(f"Database error: {str(e)}")
             return JsonResponse({
                 'status': 'error',
-                'message': f'Unexpected error: {str(e)}'
+                'message': f'Database error occurred: {str(e)}'
             }, status=500)
 
-    return JsonResponse({
-        'status': 'error',
-        'message': 'Invalid request method'
-    }, status=405)
+    except Exception as e:
+        logger.error(f"Unexpected error in process_emotion_data: {str(e)}")
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Internal server error'
+        }, status=500)
